@@ -1,0 +1,54 @@
+library(limma)
+library(edgeR)
+library(ggplot2)
+library(pheatmap)
+#Download and load data
+url <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE102nnn/GSE102416/matrix/GSE102416_series_matrix.txt.gz"
+download.file(url, destfile = "GSE102416_series_matrix.txt.gz")
+data <- read.delim("GSE102416_series_matrix.txt.gz", header = TRUE, stringsAsFactors = FALSE)
+#Extract expression data/metadata
+exprs_data <- data[, -c(1:2)] 
+gene_ids <- make.unique(data[, 1])  # Ensure unique row names
+rownames(exprs_data) <- gene_ids
+# Metadata extraction
+metadata <- data.frame(
+  sample = colnames(exprs_data),
+  condition = rep(c("Control", "Interferon"), each = 1 
+)
+common_samples <- intersect(metadata$sample, colnames(exprs_data))
+exprs_data <- exprs_data[, common_samples]
+metadata <- metadata[metadata$sample %in% common_samples, ]
+# Create DGEList object
+group <- factor(metadata$condition)
+dge <- DGEList(counts = as.matrix(exprs_data), group = group)
+#Filter lowly expressed genes
+keep <- filterByExpr(dge)
+dge <- dge[keep, , keep.lib.sizes=FALSE]
+#Calculate normalization factors
+dge <- calcNormFactors(dge)
+#Apply 'Voom' transformation
+v <- voom(dge, plot = TRUE)
+#Design matrix and linear model fitting
+design <- model.matrix(~group)
+fit <- lmFit(v, design)
+#Contrast matrix and ebayes
+contrast.matrix <- makeContrasts(Interferon-Control, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+#Top differentially expressed genes
+topGenes <- topTable(fit2, adjust.method = "BH", sort.by = "P", number = 10)
+print(topGenes)
+#MA plot
+plotMA(fit2)
+#Heatmap of top genes
+selected_genes <- rownames(topGenes)
+pheatmap(v$E[selected_genes, ])
+#Volcano plot
+volcanodata <- topTable(fit2, adjust.method = "BH", number = Inf)
+volcanodata$threshold <- volcanodata$adj.P.Val < 0.05 & abs(volcanodata$logFC) > 1
+
+ggplot(volcanodata, aes(x = logFC, y = -log10(P.Value))) +
+  geom_point(aes(color = threshold)) +
+  scale_color_manual(values = c("red", "black")) +
+  theme_minimal() +
+  labs(title = "Volcano Plot", x = "Log Fold Change", y = "-log10 P-value")
